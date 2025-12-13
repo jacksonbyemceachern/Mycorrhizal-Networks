@@ -30,12 +30,7 @@ def add_tree_at(network, grid, i: int, j: int, init_biomass=1.0):
     grid["carbon_intake"][i, j] = 0.0
 
     # network
-    network.add_node(
-        tree_id,
-        pos=(int(i), int(j)),       # only (i,j)
-        biomass=float(init_biomass),
-        carbon_intake=0.0,
-    )
+    network.add_node(tree_id)
     return tree_id
 
 
@@ -101,6 +96,64 @@ def add_connections(network, grid, scale_free_alpha):
     """
     Add new mycorrizal network connections on the network layer using scale-free network building method
     """
+    biomass = grid["biomass"]
+
+    for node in list(network):
+        preferential_attachment(network, biomass, node, scale_free_alpha)
+
+def periodic_distance(p1, p2, shape):
+    p1 = np.asarray(p1)
+    p2 = np.asarray(p2)
+
+    delta = np.abs(p1-p2)
+
+    delta = np.minimum(delta, shape-delta)
+
+    return np.sqrt(np.sum(delta**2))
+
+
+
+def preferential_attachment(network, forest, new_node, scale_free_alpha):
+    """
+    Docstring for preferential_attachment
+    
+    :param network: an nx graph
+    :param node: an integer
+    """
+
+    nodes = list(network)
+    side_len = len(forest)
+
+    sum = 0
+
+    p1 = id_to_ij(new_node)
+    
+
+    sum = 0
+    cutoffs = []
+
+    for n in nodes:
+        p2 = id_to_ij(n)
+        i2 = p2[0]
+        j2 = p2[1]
+
+        dist = periodic_distance(p1,p2,np.shape(forest))
+        biomass = forest[i2,j2]
+        val = np.exp(- scale_free_alpha * dist / biomass)
+
+        cutoffs.append(val)
+        sum += val
+
+    cutoffs = [x / sum for x in cutoffs]
+    r = np.random.rand()
+
+    for x in range(len(cutoffs)):
+        if(r < cutoffs[x]):
+            network.add_edge(new_node,nodes[x])
+
+            break
+    
+    return network
 
 def calculate_C_intake(grid, env_stress, c_rate: float = 1.0):
     """
@@ -112,19 +165,51 @@ def calculate_C_intake(grid, env_stress, c_rate: float = 1.0):
     """
     biomass = grid["biomass"]
     carbon_intake = grid["carbon_intake"]
+    max_carbon_intake = grid["carbon_intake"].copy()
 
     denom = 1.0 + max(float(env_stress), 0.0)
     carbon_intake.fill(0.0)   # Clear memory each step
     mask = biomass > 0.0
+    max_carbon_intake[mask] = float(c_rate) * biomass[mask]
     carbon_intake[mask] = float(c_rate) * biomass[mask] / denom
 
-    return carbon_intake
+    return carbon_intake, max_carbon_intake
 
-def allocate_C_intake(network, grid, C_intake_grid):
+
+def allocate_C_intake(network, grid, C_intake_grid, max_carbon_intake_grid):
     """
     Use diffusion model to allocate C
     Return a map grid with final biomass growth
     """
+
+    #get subgraphs
+    subgraphs = list(nx.connected_components(network))
+
+    for s in subgraphs:
+        carbon_sum = 0
+        cmax_value = []
+        for n in s:
+            i,j = id_to_ij(n)
+            carbon_sum += C_intake_grid[i,j]
+            cmax_value.append(max_carbon_intake_grid[i,j])
+
+        s_ordered, cmax_ordered = zip(*sorted(zip(s,cmax_value)))
+        for n in range(s_ordered):
+            avg_C = carbon_sum / (len(s_ordered) - n)
+            i,j = id_to_ij(s_ordered[n])
+            if(cmax_ordered[n] < avg_C):
+                C_intake_grid[i,j] = cmax_ordered[n]
+                carbon_sum -= cmax_ordered[n]
+            else:
+                C_intake_grid[i,j] = avg_C
+                carbon_sum -= avg_C
+
+    return C_intake_grid
+                
+
+
+
+
 
 def check_survival(network, grid, env_stress):
     """
@@ -204,12 +289,7 @@ def run_simulation(prob_seedling, scale_free_alpha, env_stress, N, steps, seed=N
     # Network layer initialization
     # -----------------------
     network = nx.Graph()
-    network.graph.update({
-        "N": N,
-        "periodic": True,
-        "scale_free_alpha": scale_free_alpha,
-        "rng": rng,
-        })
+
 
     # optional init
     if init_tree_density > 0:
