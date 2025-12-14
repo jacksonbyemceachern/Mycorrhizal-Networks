@@ -1,5 +1,6 @@
 import numpy as np
 import networkx as nx
+import matplotlib.pyplot as plt
 
 
 # ==============================
@@ -362,7 +363,7 @@ def check_survival(network, grid, env_stress):
 
 
 
-def run_simulation(prob_seedling, scale_free_alpha, env_stress, N, steps, seed=None, init_tree_density=0.0, init_biomass=1.0):
+def run_simulation(prob_seedling, scale_free_alpha, network_beta, env_stress, N, steps, seed=None, init_tree_density=0.0, init_biomass=1.0):
     """
     N: grid shape N*N
     seed: random seed (optional)
@@ -401,27 +402,55 @@ def run_simulation(prob_seedling, scale_free_alpha, env_stress, N, steps, seed=N
     # -----------------------
     # Main loop
     # -----------------------
+    historical_data = []
+    historical_transfer = []
     for t in range(steps):
-        print(t)
         grid["step"] = t
         grow_seedlings(prob_seedling, network, grid, init_biomass)
-        print("seedlings grown")
-        add_connections(network, grid, scale_free_alpha)
-        print("connections added")
+        add_connections(network, grid, scale_free_alpha, beta=network_beta)
         carbon_intake, max_carbon_intake = calculate_C_intake(grid, env_stress)
-        print("Intake Calculated")
         C_grid_former, C_grid_later = allocate_C_intake(network, grid, carbon_intake, max_carbon_intake)
-        print("Intake Allocated")
         grid["biomass"] += C_grid_later
-        print("Biomass Adjusted")
         check_survival(network, grid, env_stress)
+        if t % 100 == 0:
+            print(t)
+    
+    historical_data.append(grid.copy())
+    historical_transfer.append(C_grid_later - C_grid_former)
 
-    return network, grid
+    return network, grid, historical_data, historical_transfer
 
 
 # -----------------------------
 # Run
 # -----------------------------
 if __name__ == "__main__":
-    network, grid = run_simulation(0.2, 1, 0.4, 50, 1000, 3, 0.1)
-    print(grid)
+    beta_values = [.2,.4,.6,.8]
+
+    stress_by_beta = []
+    biomass_by_beta = []
+
+    for b in beta_values:
+        stress = []
+        avg_biomass_list = []
+        for x in range(10):
+            stress.append(.1 * x)
+            network, grid, hist, trans = run_simulation(0.2, 1,b, .1*x, 50, 500, 3, 0.1)
+
+            tot_biomass = 0
+            for n in range(len(hist)):
+                tot_biomass += np.sum(hist[n]["biomass"])
+            avg_biomass = tot_biomass / len(hist)
+            avg_biomass_list.append(avg_biomass)
+        
+        stress_by_beta.append(stress)
+        biomass_by_beta.append(avg_biomass_list)
+
+    
+    for b in range(len(beta_values)):
+        plt.plot(stress_by_beta[b][1:],biomass_by_beta[b][1:],marker='s',color='blue',label = "Beta = " + str(.1*b))
+        
+    plt.yscale('log')
+    plt.legend()
+    plt.show()
+
