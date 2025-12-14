@@ -9,11 +9,17 @@ def ij_to_id(i: int, j: int, side: int) -> int:
     """Deterministic mapping: tree_id = j + side * i."""
     return int(j) + int(side) * int(i)
 
-def id_to_ij(tree_id: int, side: int) -> tuple[int, int]:
-    """Inverse mapping: (i,j) from tree_id."""
-    i = int(tree_id) // int(side)
-    j = int(tree_id) % int(side)
-    return i, j
+def id_to_ij(node_id, N):
+    """Convert linear node ID to (i,j) in NxN forest array."""
+    return divmod(node_id, N)
+
+def periodic_distance(p1, p2, shape):
+    """Compute periodic (torus) distance between two points."""
+    dx = abs(p1[0] - p2[0])
+    dy = abs(p1[1] - p2[1])
+    dx = min(dx, shape[0] - dx)
+    dy = min(dy, shape[1] - dy)
+    return np.sqrt(dx*dx + dy*dy)
 
 # ==============================
 # Helpers
@@ -92,31 +98,66 @@ def grow_seedlings(prob_seedling, network, grid, init_biomass=1.0):
 
     return new_count
 
+
 def add_connections(network, grid, scale_free_alpha, m=2, delta=1.0, beta=1.0):
     """
-    Add new mycorrizal network connections on the network layer using scale-free network building method
+    Vectorized and faster preferential attachment with degree + distance.
+    Approximate Euclidean distances; optionally periodic boundary can be added.
     """
     forest = grid["biomass"]
     rng = grid["rng"]
+    N = forest.shape[0]
 
-    # Treat nodes with degree 0 as "new seedlings" to be attached this step
-    new_nodes = [n for n, deg in network.degree() if deg == 0]
-
-    # If you start from an empty/isolated state, nothing to attach to
-    if len(network) <= 1:
+    # Get new nodes (degree 0)
+    new_nodes = np.array([n for n, deg in network.degree() if deg == 0])
+    if len(network) <= 1 or new_nodes.size == 0:
         return
 
+    # Precompute positions for all nodes in network
+    all_nodes = np.array(network.nodes(), dtype=int)
+    coords = np.array([divmod(n, N) for n in all_nodes], dtype=float)  # Nx2
+
+    # Degrees as array
+    degrees = np.array([network.degree(n) for n in all_nodes], dtype=float)
+
     for v in new_nodes:
-        preferential_attachment(
-            network=network,
-            forest=forest,
-            new_node=v,
-            scale_free_alpha=scale_free_alpha,
-            rng=rng,
-            m=m,
-            delta=delta,
-            beta=beta,
-        )
+        m_eff = min(m, len(all_nodes) - 1)
+        if m_eff <= 0:
+            continue
+
+        # Position of new node
+        p1 = np.array(divmod(v, N), dtype=float)
+
+        # Candidate mask (exclude self)
+        mask = all_nodes != v
+        candidates = all_nodes[mask]
+        candidate_coords = coords[mask]
+        candidate_degrees = degrees[mask]
+
+        # Vectorized Euclidean distances
+        diff = candidate_coords - p1
+        dists = np.linalg.norm(diff, axis=1)
+
+        # Compute attachment weights
+        weights = (candidate_degrees + delta) ** beta * np.exp(-scale_free_alpha * dists)
+
+        # Fallback if weights sum to zero
+        if not np.isfinite(weights).all() or weights.sum() <= 0:
+            targets = rng.choice(candidates, size=m_eff, replace=False)
+        else:
+            probs = weights / weights.sum()
+            targets = rng.choice(candidates, size=m_eff, replace=False, p=probs)
+
+        # Add edges
+        for t in targets:
+            network.add_edge(v, t)
+
+        # Update degree cache
+        degrees[all_nodes == v] = m_eff
+        for t in targets:
+            degrees[all_nodes == t] += 1
+
+           
 
 
 def periodic_distance(p1, p2, shape):
@@ -220,34 +261,52 @@ def allocate_C_intake(network, grid, C_intake_grid, max_carbon_intake_grid):
     Return a map grid with final biomass growth
     """
 
-    #get subgraphs
-    subgraphs = list(nx.connected_components(network))
     N = grid["N"]
     before_allocation = C_intake_grid.copy()
 
-    for s in subgraphs:
-        carbon_sum = 0
-        cmax_value = []
-        for n in s:
-            i,j = id_to_ij(n, N)
-            carbon_sum += float(C_intake_grid[i,j])
-            cmax_value.append(max_carbon_intake_grid[i,j])
-        
-        pairs = sorted(zip(s, cmax_value), key=lambda x: x[1])
-        s_ordered, cmax_ordered = (zip(*pairs) if pairs else ((), ()))
-        # s_ordered, cmax_ordered = zip(*sorted(zip(s,cmax_value)))
+    # Pre-cache id -> (i, j)
+    def id_to_ij_fast(node_id):
+        return divmod(node_id, N)
 
-        for n in range(len(s_ordered)):
-            avg_C = carbon_sum / (len(s_ordered) - n)
-            i,j = id_to_ij(s_ordered[n], N)
-            if(cmax_ordered[n] < avg_C):
-                C_intake_grid[i,j] = cmax_ordered[n]
-                carbon_sum -= cmax_ordered[n]
+    for component in nx.connected_components(network):
+
+        # Convert component to array for faster processing
+        nodes = np.fromiter(component, dtype=int)
+        if nodes.size == 0:
+            continue
+
+        # Map nodes to grid indices
+        ij = np.array([id_to_ij_fast(n) for n in nodes])
+        ii, jj = ij[:, 0], ij[:, 1]
+
+        # Gather values
+        carbon = C_intake_grid[ii, jj].astype(float)
+        cmax = max_carbon_intake_grid[ii, jj]
+
+        carbon_sum = carbon.sum()
+
+        # Sort by cmax (ascending)
+        order = np.argsort(cmax)
+        nodes_sorted = nodes[order]
+        cmax_sorted = cmax[order]
+        ii_sorted = ii[order]
+        jj_sorted = jj[order]
+
+        remaining = len(nodes_sorted)
+
+        for k in range(remaining):
+            avg_C = carbon_sum / (remaining - k)
+
+            if cmax_sorted[k] < avg_C:
+                val = cmax_sorted[k]
             else:
-                C_intake_grid[i,j] = avg_C
-                carbon_sum -= avg_C
+                val = avg_C
+
+            C_intake_grid[ii_sorted[k], jj_sorted[k]] = val
+            carbon_sum -= val
 
     return before_allocation, C_intake_grid
+
                 
 
 
@@ -343,12 +402,18 @@ def run_simulation(prob_seedling, scale_free_alpha, env_stress, N, steps, seed=N
     # Main loop
     # -----------------------
     for t in range(steps):
+        print(t)
         grid["step"] = t
         grow_seedlings(prob_seedling, network, grid, init_biomass)
+        print("seedlings grown")
         add_connections(network, grid, scale_free_alpha)
+        print("connections added")
         carbon_intake, max_carbon_intake = calculate_C_intake(grid, env_stress)
+        print("Intake Calculated")
         C_grid_former, C_grid_later = allocate_C_intake(network, grid, carbon_intake, max_carbon_intake)
+        print("Intake Allocated")
         grid["biomass"] += C_grid_later
+        print("Biomass Adjusted")
         check_survival(network, grid, env_stress)
 
     return network, grid
