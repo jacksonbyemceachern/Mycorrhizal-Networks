@@ -283,7 +283,7 @@ def check_survival(network, grid, env_stress):
             removed += 1
 
     # step 2) stochastic removals by env_stress
-    death_prob = 0.05 * env_stress             # ------------------------- modified!
+    death_prob = env_stress             # ------------------------- modified!
     death_prob = np.clip(death_prob, 0, 1)     # ------------------------- modified!
     if death_prob > 0.0:
         alive_mask = biomass > 0.0
@@ -382,20 +382,26 @@ def plot_biomass_states(initial_biomass, final_biomass, title="Biomass States"):
     Render side-by-side grid plots showing the biomass distribution at the start and end.
     """
     vmax = max(float(np.max(initial_biomass)), float(np.max(final_biomass)), 1e-12)
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    fig, axes = plt.subplots(
+        1,
+        3,
+        figsize=(12, 4),
+        gridspec_kw={"width_ratios": [1, 1, 0.05], "wspace": 0.15},
+    )
+    ax_init, ax_final, ax_cbar = axes
 
-    im0 = axes[0].imshow(initial_biomass, cmap="YlGn", vmin=0, vmax=vmax)
-    axes[0].set_title("Initial State")
-    axes[0].set_xticks([])
-    axes[0].set_yticks([])
+    im0 = ax_init.imshow(initial_biomass, cmap="YlGn", vmin=0, vmax=vmax)
+    ax_init.set_title("Initial State")
+    ax_init.set_xticks([])
+    ax_init.set_yticks([])
 
-    im1 = axes[1].imshow(final_biomass, cmap="YlGn", vmin=0, vmax=vmax)
-    axes[1].set_title("Final State")
-    axes[1].set_xticks([])
-    axes[1].set_yticks([])
+    im1 = ax_final.imshow(final_biomass, cmap="YlGn", vmin=0, vmax=vmax)
+    ax_final.set_title("Final State")
+    ax_final.set_xticks([])
+    ax_final.set_yticks([])
 
     fig.suptitle(title)
-    fig.colorbar(im1, ax=axes.ravel().tolist(), shrink=0.8, label="Biomass")
+    fig.colorbar(im1, cax=ax_cbar, label="Biomass")
     fig.tight_layout()
     plt.show()
 
