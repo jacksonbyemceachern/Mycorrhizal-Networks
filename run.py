@@ -1,5 +1,6 @@
 import numpy as np
 import networkx as nx
+from matplotlib import pyplot as plt
 
 
 # ==============================
@@ -353,6 +354,79 @@ def run_simulation(prob_seedling, scale_free_alpha, env_stress, N, steps, seed=N
 
     return network, grid
 
+
+# expected biomass vs stress( carbon intake )
+def plot_expected_biomass_stress_matrix():
+    """
+    color = Carbon Intake
+    """
+    biomass = np.linspace(0, 10, 200)
+    stress = np.linspace(0, 1, 200)
+
+    B, S = np.meshgrid(biomass, stress)
+
+    c_rate = 1.0
+    carbon_intake = (c_rate * B) / (1 + S)
+
+    plt.figure(figsize=(8, 6))
+
+    mesh = plt.pcolormesh(B, S, carbon_intake, shading='auto', cmap='viridis')
+
+    cbar = plt.colorbar(mesh)
+    cbar.set_label('Carbon Intake Rate', rotation=270, labelpad=15)
+
+    plt.xlabel('Tree Biomass (Size)')
+    plt.ylabel('Environmental Stress')
+    plt.title('Theoretical Model: Biomass vs. Stress')
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_survival_filtering_experiment():
+
+    survivor_biomass = []
+    survivor_stress = []
+    stress_levels = np.linspace(0.05, 0.6, 15)
+
+    for s in stress_levels:
+        network, grid = run_simulation(
+            prob_seedling=0.3,
+            scale_free_alpha=1.0,
+            env_stress=s,
+            N=40,
+            steps=500,
+            seed=None,
+            init_tree_density=0.2
+        )
+
+        biomass_grid = grid["biomass"]
+        mask = biomass_grid > 0
+
+        current_biomass = biomass_grid[mask].flatten()
+
+        survivor_biomass.extend(current_biomass)
+        survivor_stress.extend([s] * len(current_biomass))
+
+        print(f"  stress {s:.2f}: survival trees: {len(current_biomass)} 棵")
+
+    print("plotting...")
+    plt.figure(figsize=(10, 7))
+
+    plt.scatter(survivor_biomass, survivor_stress, c='green', alpha=0.3, s=15, edgecolors='none')
+    plt.xlabel('Tree Biomass (Size)', fontsize=12)
+    plt.ylabel('Environmental Stress (Death Probability)', fontsize=12)
+    plt.title('Effect of check_survival: Stress vs. Max Achievable Biomass', fontsize=14)
+
+    plt.fill_betweenx([0, 0.6], 15, 25, color='red', alpha=0.1)
+    plt.text(18, 0.5, "NO TREES HERE\n(Killed before growing big)",
+             color='darkred', ha='center', fontweight='bold')
+
+    plt.text(2, 0.1, "Low Stress:\nTrees have time to grow", color='darkgreen', fontsize=10)
+
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.tight_layout()
+    plt.show()
 
 # -----------------------------
 # Run
