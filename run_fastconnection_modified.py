@@ -1,7 +1,7 @@
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
-
+import copy
 
 # ==============================
 # ID <-> (i,j) mapping (y,x)
@@ -357,37 +357,86 @@ def run_simulation(prob_seedling, scale_free_alpha, network_beta, env_stress, N,
 
     return network, grid, historical_data, historical_transfer
 
+def analyze_hub_removal(network, grid, removal_fraction=0.05):
+    side = grid["N"]
 
+    net_hub = network.copy()
+    grid_hub = copy.deepcopy(grid)
+
+    net_rand = network.copy()
+    grid_rand = copy.deepcopy(grid)
+
+    nodes_by_degree = sorted(network.degree(), key=lambda x: x[1], reverse=True)
+    num_to_remove = int(len(nodes_by_degree) * removal_fraction)
+    hubs_to_remove = [n for n, d in nodes_by_degree[:num_to_remove]]
+
+    all_nodes = list(network.nodes())
+    random_to_remove = np.random.choice(all_nodes, num_to_remove, replace=False)
+
+    def get_biomass_after_removal(net, g, nodes):
+        for node in nodes:
+            i, j = id_to_ij(node, side)
+            remove_tree_at(net, g, i, j)
+        return np.sum(g["biomass"])
+
+    biomass_before = np.sum(grid["biomass"])
+    biomass_hub = get_biomass_after_removal(net_hub, grid_hub, hubs_to_remove)
+    biomass_rand = get_biomass_after_removal(net_rand, grid_rand, random_to_remove)
+
+    return biomass_before, biomass_hub, biomass_rand
+
+
+if __name__ == "__main__":
+
+    fractions = [0, 0.02, 0.05, 0.1, 0.15, 0.2]
+    hub_impact = []
+    rand_impact = []
+
+    net, grid, _, _ = run_simulation(0.2, 1, 0.8, 0.1, 50, 300, 42, 0.1)
+    for f in fractions:
+        _, b_hub, b_rand = analyze_hub_removal(net, grid, f)
+        hub_impact.append(b_hub)
+        rand_impact.append(b_rand)
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(fractions, hub_impact, 'r-o', label='Remove Hubs (Targeted)')
+    plt.plot(fractions, rand_impact, 'b--s', label='Remove Random Trees')
+    plt.xlabel('Fraction of Trees Removed')
+    plt.ylabel('Total Forest Biomass')
+    plt.title('Impact of Hub Removal on Forest Biomass')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
 # -----------------------------
 # Run
 # -----------------------------
-if __name__ == "__main__":
-    beta_values = [.2,.4,.6,.8]
-
-    stress_by_beta = []
-    biomass_by_beta = []
-
-    for b in beta_values:
-        stress = []
-        avg_biomass_list = []
-        for x in range(10):
-            stress.append(.1 * x)
-            network, grid, hist, trans = run_simulation(0.2, 1,b, .1*x, 50, 500, 3, 0.1)
-
-            tot_biomass = 0
-            for n in range(len(hist)):
-                tot_biomass += np.sum(hist[n]["biomass"])
-            avg_biomass = tot_biomass / len(hist)
-            avg_biomass_list.append(avg_biomass)
-        
-        stress_by_beta.append(stress)
-        biomass_by_beta.append(avg_biomass_list)
-
-    
-    for b in range(len(beta_values)):
-        plt.plot(stress_by_beta[b][1:],biomass_by_beta[b][1:],marker='s',color='blue',label = "Beta = " + str(.1*b))
-        
-    plt.yscale('log')
-    plt.legend()
-    plt.show()
+# if __name__ == "__main__":
+#     beta_values = [.2,.4,.6,.8]
+#
+#     stress_by_beta = []
+#     biomass_by_beta = []
+#
+#     for b in beta_values:
+#         stress = []
+#         avg_biomass_list = []
+#         for x in range(10):
+#             stress.append(.1 * x)
+#             network, grid, hist, trans = run_simulation(0.2, 1,b, .1*x, 50, 500, 3, 0.1)
+#
+#             tot_biomass = 0
+#             for n in range(len(hist)):
+#                 tot_biomass += np.sum(hist[n]["biomass"])
+#             avg_biomass = tot_biomass / len(hist)
+#             avg_biomass_list.append(avg_biomass)
+#
+#         stress_by_beta.append(stress)
+#         biomass_by_beta.append(avg_biomass_list)
+#
+#
+#     for b in range(len(beta_values)):
+#         plt.plot(stress_by_beta[b][1:],biomass_by_beta[b][1:],marker='s',color='blue',label = "Beta = " + str(.1*b))
+#
+#     plt.yscale('log')
+#     plt.legend()
+#     plt.show()
 
