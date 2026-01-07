@@ -239,14 +239,17 @@ def preferential_attachment(network, forest, new_node, scale_free_alpha, rng, m,
     
     return network
 
-def calculate_C_intake(grid, env_stress, c_rate: float = 1.0):
+def calculate_C_intake(grid, env_stress, c_rate: float = 2.242):
     """
-    C intake in each step: carbon_intake = c_rate * biomass / (1 + env_stress)
+    LOGISTIC UPDATE
+    C intake in each step: carbon_intake = biomass * Beta * (1 - biomass / alpha)
     Only trees (biomass > 0) produce intake; empty cells stay 0
 
     Returns:
       Updated grid["carbon_intake"]
     """
+    BETA = c_rate
+    ALPHA = 23.41
     biomass = grid["biomass"]
     carbon_intake = grid["carbon_intake"]
     max_carbon_intake = carbon_intake.copy()
@@ -254,9 +257,8 @@ def calculate_C_intake(grid, env_stress, c_rate: float = 1.0):
     denom = 1.0 + max(float(env_stress), 0.0)
     carbon_intake.fill(0.0)   # Clear memory each step
     mask = biomass > 0.0
-    max_carbon_intake[mask] = float(c_rate) * biomass[mask]
-    carbon_intake[mask] = float(c_rate) * biomass[mask] / denom
-
+    max_carbon_intake[mask] = BETA * (1 - biomass[mask] / ALPHA)
+    carbon_intake[mask] = (1-env_stress) * BETA * biomass[mask]
     return carbon_intake, max_carbon_intake
 
 
@@ -289,6 +291,7 @@ def allocate_C_intake(network, grid, C_intake_grid, max_carbon_intake_grid):
         cmax = max_carbon_intake_grid[ii, jj]
 
         carbon_sum = carbon.sum()
+        #print(carbon_sum)
 
         # Sort by cmax (ascending)
         order = np.argsort(cmax)
@@ -416,11 +419,9 @@ def run_simulation(prob_seedling, scale_free_alpha, network_beta, env_stress, N,
         C_grid_former, C_grid_later = allocate_C_intake(network, grid, carbon_intake, max_carbon_intake)
         grid["biomass"] += C_grid_later
         check_survival(network, grid, env_stress)
-
-        c_transfer = C_grid_later-C_grid_former
-        
+    
         historical_data.append(grid.copy())
-        historical_transfer.append(c_transfer.copy())
+        historical_transfer.append(C_grid_later - C_grid_former)
 
     return network, grid, historical_data, historical_transfer
 
@@ -429,48 +430,44 @@ def run_simulation(prob_seedling, scale_free_alpha, network_beta, env_stress, N,
 # Run
 # -----------------------------
 if __name__ == "__main__":
-    beta_values = [0,100]
-    alpha_values = [0,10_000]
+    
 
-    stress_by_beta = []
-    biomass_by_beta = []
+    alpha_values = [0,10000]
+
+    history_by_alpha = []
 
     for a in alpha_values:
-        stress = []
-        avg_biomass_list = []
-        for x in range(10):
-            stress.append(.1 * x)
-            network, grid, hist, trans = run_simulation(0.02, a ,1, .1*x, 50, 100)
-            nx.draw(network,node_size=5,node_color="green")
+        network, grid, hist, trans = run_simulation(0.02, a , 1, .3, 100, 20)
+        history_by_alpha.append(hist.copy())
+        nx.draw(network,node_size=5,node_color="green")
+        plt.show()
 
-            plt.show()
-            tot_transfer = 0
-            tot_trees = 0
-            for n in range(len(hist)):
-                #Each transfer is recorded twice: as an increase in one and a decrease in another...
-                tot_transfer += np.sum(abs(trans[n])) / 2.0 
-            avg_transfer = tot_transfer / len(hist)
-            avg_biomass_list.append(avg_transfer)
-
-            #plt.matshow(hist[-1]["biomass"])
+    biomass_over_time_by_alpha = []
+    for a in history_by_alpha:
+        biomass_over_time = []
+        for t in range(20):
+            biomass_over_time.append(np.sum(a[t]["biomass"]))
+            #plt.matshow(a[t]["biomass"])
             #plt.colorbar()
             #plt.show()
-        
-        stress_by_beta.append(stress)
-        biomass_by_beta.append(avg_biomass_list)
+        biomass_over_time_by_alpha.append(biomass_over_time)
 
-    
+
     fig, ax = plt.subplots()
 
-    for b in range(len(beta_values)):
+    for a in range(len(alpha_values)):
 
 
-        ax.plot(stress_by_beta[b][1:],biomass_by_beta[b][1:],marker='s', label = "Beta = " + str(beta_values[b]))
+        ax.plot(range(20),biomass_over_time_by_alpha[a],marker='s', label = "Beta = " + str(alpha_values[a]))
             
     plt.title("Effect of Stress on Biomass in different network structures")
     ax.set_xlabel("Stress")
     ax.set_ylabel("Average Total Biomass")
-    plt.yscale('log')
+    #plt.yscale('log')
     plt.legend()
     plt.show()
+
+    
+
+
 
